@@ -1,0 +1,244 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Goods Volume Price Calculator</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: auto; }
+    label, input, select { display: block; margin: 10px 0; width: 100%; }
+    input[type="number"], input[type="text"], select { padding: 8px; appearance: none; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #333; padding: 8px; text-align: center; }
+    th { background-color: #ddd; }
+    button { margin-top: 10px; padding: 10px; font-size: 16px; cursor: pointer; }
+    .empty-checkbox { transform: scale(1.5); }
+    #authOverlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: white; display: flex; justify-content: center;
+      align-items: center; z-index: 9999; flex-direction: column;
+    }
+    #rateEditor {
+      display: none; position: fixed; top: 20%; left: 50%; transform: translateX(-50%);
+      background: #fff; border: 1px solid #ccc; padding: 20px; z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+
+<div id="authOverlay">
+  <h2>🔐 Nhập mật khẩu để truy cập</h2>
+  <input type="password" id="passwordInput" placeholder="Mật khẩu" />
+  <button onclick="checkPassword()">Xác nhận</button>
+</div>
+
+<h2>Goods Volume Price Calculator</h2>
+<img src="logo_converted.png" style="height: 50px; margin-bottom: 10px;" />
+<button onclick="createNewPOD()">Create New POD</button>
+<select id="podSelector" onchange="switchPOD()">
+  <option value="">-- Select POD --</option>
+</select>
+<div id="podInfo" style="font-weight:bold; margin: 10px 0;"></div>
+
+<label for="length">Length (cm):</label>
+<input type="number" id="length" />
+
+<label for="width">Width (cm):</label>
+<input type="number" id="width" />
+
+<label for="height">Height (cm):</label>
+<input type="number" id="height" />
+
+<label for="type">Goods Type:</label>
+<select id="type">
+  <option value="wooden">Wooden Case</option>
+  <option value="bare">Bare Case</option>
+  <option value="carton">Cartons</option>
+</select>
+
+<button onclick="calculatePrice()">Calculate</button>
+<button onclick="finishPOD()">Finish POD</button>
+<button onclick="showRateEditor()">Edit Rates</button>
+
+<div id="tableContainer">
+  <table id="resultTable">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Type</th>
+        <th>L</th>
+        <th>W</th>
+        <th>H</th>
+        <th>Vol (m³)</th>
+        <th>Rate</th>
+        <th>Total</th>
+        <th>Empty?</th>
+        <th>Empty Fee</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+    <tfoot>
+      <tr><td colspan="7" style="text-align:right">Total Goods:</td><td id="totalPrice">0.00</td><td></td><td></td></tr>
+      <tr><td colspan="9" style="text-align:right">Total Empty Fee:</td><td id="totalEmpty">0.00</td></tr>
+      <tr><td colspan="9" style="text-align:right">Grand Total:</td><td id="grandTotal">0.00</td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<button onclick="window.print()">Print Table</button>
+<button onclick="exportTableToPDF()">Export to PDF</button>
+
+<div id="rateEditor">
+  <h3>Edit Rates</h3>
+  Wooden: <input id="rateWooden" type="number" />
+  Bare: <input id="rateBare" type="number" />
+  Carton: <input id="rateCarton" type="number" />
+  Empty Case Rate: <input id="rateEmpty" type="number" />
+  <button onclick="saveRates()">Save</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+const correctPassword = "123456";
+function checkPassword() {
+  if (document.getElementById("passwordInput").value === correctPassword) {
+    document.getElementById("authOverlay").style.display = "none";
+  } else alert("❌ Mật khẩu không đúng!");
+}
+
+let pods = [];
+let currentPodIndex = -1;
+let pricing = { wooden: 35, bare: 31, carton: 27, emptyCase: 15 };
+
+window.onload = function () {
+  fetch("load.php")
+    .then(res => res.json())
+    .then(data => {
+      if (Array.isArray(data)) {
+        pods = data;
+        if (pods.length > 0) {
+          currentPodIndex = pods.length - 1;
+          updatePodSelector();
+          renderTable();
+        }
+      }
+    });
+};
+
+function createNewPOD() {
+  const customer = prompt("Customer name:");
+  const booth = prompt("Booth number:");
+  const pod = { customer, booth, entries: [] };
+  pods.push(pod);
+  currentPodIndex = pods.length - 1;
+  updatePodSelector();
+  renderTable();
+}
+
+function updatePodSelector() {
+  const sel = document.getElementById("podSelector");
+  sel.innerHTML = "<option value=''>-- Select POD --</option>";
+  pods.forEach((p, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = `${p.customer} / ${p.booth}`;
+    if (i === currentPodIndex) o.selected = true;
+    sel.appendChild(o);
+  });
+  const p = pods[currentPodIndex];
+  document.getElementById("podInfo").textContent = `POD: ${p.customer} / ${p.booth}`;
+}
+
+function switchPOD() {
+  currentPodIndex = parseInt(document.getElementById("podSelector").value);
+  renderTable();
+}
+
+function calculatePrice() {
+  const l = +document.getElementById("length").value;
+  const w = +document.getElementById("width").value;
+  const h = +document.getElementById("height").value;
+  const t = document.getElementById("type").value;
+  if (!pods[currentPodIndex]) return alert("Create a POD first!");
+  const vol = (l*w*h)/1000000;
+  const rate = pricing[t];
+  pods[currentPodIndex].entries.push({ type: t, l, w, h, vol, rate, total: 0, chargeVol: 0, empty: false });
+  renderTable();
+}
+
+function toggleEmpty(index, checked) {
+  pods[currentPodIndex].entries[index].empty = checked;
+  renderTable();
+}
+
+function renderTable() {
+  const body = document.querySelector("#resultTable tbody");
+  body.innerHTML = "";
+  let total = 0, emptyFee = 0;
+  const entries = pods[currentPodIndex].entries;
+  let totalVol = entries.reduce((sum, e) => sum + e.vol, 0);
+  let chargeableVol = Math.max(totalVol, 2);
+  entries.forEach((e, i) => {
+    e.chargeVol = totalVol === 0 ? 0 : (e.vol / totalVol) * chargeableVol;
+    e.total = e.chargeVol * e.rate;
+    const ef = e.empty ? (e.chargeVol * pricing.emptyCase) : 0;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${i+1}</td><td>${e.type}</td><td>${e.l}</td><td>${e.w}</td><td>${e.h}</td>
+      <td>${e.chargeVol.toFixed(3)}</td><td>${e.rate}</td><td>${e.total.toFixed(2)}</td>
+      <td><input type="checkbox" class="empty-checkbox" ${e.empty ? "checked" : ""} onchange="toggleEmpty(${i}, this.checked)" /></td>
+      <td>${ef.toFixed(2)}</td>
+    `;
+    total += e.total;
+    emptyFee += ef;
+    body.appendChild(tr);
+  });
+  document.getElementById("totalPrice").textContent = total.toFixed(2);
+  document.getElementById("totalEmpty").textContent = emptyFee.toFixed(2);
+  document.getElementById("grandTotal").textContent = (total + emptyFee).toFixed(2);
+}
+
+function showRateEditor() {
+  document.getElementById("rateWooden").value = pricing.wooden;
+  document.getElementById("rateBare").value = pricing.bare;
+  document.getElementById("rateCarton").value = pricing.carton;
+  document.getElementById("rateEmpty").value = pricing.emptyCase;
+  document.getElementById("rateEditor").style.display = "block";
+}
+
+function saveRates() {
+  pricing.wooden = +document.getElementById("rateWooden").value;
+  pricing.bare = +document.getElementById("rateBare").value;
+  pricing.carton = +document.getElementById("rateCarton").value;
+  pricing.emptyCase = +document.getElementById("rateEmpty").value;
+  document.getElementById("rateEditor").style.display = "none";
+  renderTable();
+}
+
+function finishPOD() {
+  fetch("save.php", {
+    method: "POST",
+    body: JSON.stringify(pods),
+    headers: { "Content-Type": "application/json" }
+  }).then(() => alert("POD saved."));
+}
+
+async function exportTableToPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const container = document.getElementById("tableContainer");
+  const canvas = await html2canvas(container, { scale: 2 });
+  const imgData = canvas.toDataURL("image/png");
+
+  const logo = new Image();
+  logo.src = "logo_converted.png";
+  logo.onload = function () {
+    doc.addImage(logo, "PNG", 10, 5, 40, 15);
+    doc.addImage(imgData, "PNG", 10, 25, 270, 0);
+    doc.save("goods_volume.pdf");
+  };
+}
+</script>
+</body>
+</html>
